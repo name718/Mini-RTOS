@@ -60,3 +60,8 @@ StackType_t *pxPortInitialiseStack(StackType_t *pxTopOfStack,
   /* 3. 返回最终伪造好以后的栈顶指针 */
   return pxTopOfStack;
 }
+
+BaseType_t xPortStartScheduler(void) {
+  /* 移植层启动硬件调度器 */
+  return 1;
+}

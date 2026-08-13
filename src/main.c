@@ -1,6 +1,7 @@
+#include <stdio.h>
 #include "../include/list.h"
 #include "../include/task.h"
-#include <stdio.h>
+#include "../include/port.h"
 
 /* ------------------ 模块一：双向链表单元测试 ------------------ */
 void test_list_module(void) {
@@ -45,8 +46,7 @@ void test_list_module(void) {
   printf("END\n\n");
 }
 
-/* ------------------ 模块二：任务创建、栈解剖与多优先级测试 ------------------
- */
+/* ------------------ 模块二：任务创建、栈解剖与多优先级测试 ------------------ */
 #define TASK_STACK_SIZE 128
 static StackType_t ucTask1Stack[TASK_STACK_SIZE];
 static TCB_t xTask1TCB;
@@ -56,19 +56,16 @@ static TCB_t xTask2TCB;
 
 void vTask1(void *pvParameters) {
   printf("Task 1 is running with parameter: %s\n", (char *)pvParameters);
-  while (1) {
-  }
+  while (1) {}
 }
 
 void vTask2(void *pvParameters) {
   (void)pvParameters;
-  while (1) {
-  }
+  while (1) {}
 }
 
 void test_task_module(void) {
-  printf("================ [模块测试 2] MiniRTOS 任务静态创建与就绪列表 "
-         "================\n");
+  printf("================ [模块测试 2] MiniRTOS 任务静态创建与就绪列表 ================\n");
 
   /* 1. 初始化所有优先级的就绪链表数组 */
   prvInitialiseTaskLists();
@@ -80,8 +77,7 @@ void test_task_module(void) {
 
   TCB_t *pxTCB1 = (TCB_t *)xHandle1;
 
-  printf("Task_1 创建成功！任务名: %s, 优先级: %u\n", pxTCB1->pcTaskName,
-         (unsigned int)pxTCB1->uxPriority);
+  printf("Task_1 创建成功！任务名: %s, 优先级: %u\n", pxTCB1->pcTaskName, (unsigned int)pxTCB1->uxPriority);
   printf("栈基地址: %p, 当前伪造栈顶 pxTopOfStack: %p\n",
          (void *)pxTCB1->pxStack, (void *)pxTCB1->pxTopOfStack);
 
@@ -110,20 +106,41 @@ void test_task_module(void) {
          pxStackPointer[15]);
   printf("  --------------------------------------------------\n");
 
-  printf("\n[测试 3] 创建 Task_1 后，pxCurrentTCB 指向: %s (优先级: %u)\n",
+  printf("\n[测试 3] 创建 Task_1 后，pxCurrentTCB 指向: %s (优先级: %u)\n", 
          pxCurrentTCB->pcTaskName, (unsigned int)pxCurrentTCB->uxPriority);
 
   /* 3. 创建更高优先级的 Task 2 (优先级 3) */
   printf("\n创建高优先级的 Task_2 (优先级 3)...\n");
-  xTaskCreateStatic(vTask2, "Task_2", TASK_STACK_SIZE, NULL, 3, ucTask2Stack,
-                    &xTask2TCB);
+  xTaskCreateStatic(vTask2, "Task_2", TASK_STACK_SIZE, NULL,
+                    3, ucTask2Stack, &xTask2TCB);
 
-  printf(
-      "[测试 4] 创建 Task_2 后，pxCurrentTCB 自动抢占更新为: %s (优先级: %u)\n",
-      pxCurrentTCB->pcTaskName, (unsigned int)pxCurrentTCB->uxPriority);
+  printf("[测试 4] 创建 Task_2 后，pxCurrentTCB 自动抢占更新为: %s (优先级: %u)\n", 
+         pxCurrentTCB->pcTaskName, (unsigned int)pxCurrentTCB->uxPriority);
 
-  printf("====================================================================="
-         "=\n\n");
+  printf("======================================================================\n\n");
+}
+
+/* ------------------ 模块三：调度器启动与 IDLE 任务单元测试 ------------------ */
+extern List_t pxReadyTasksLists[ configMAX_PRIORITIES ];
+
+void test_scheduler_module(void)
+{
+    printf("================ [模块测试 3] MiniRTOS 调度器启动与 IDLE 任务 ================\n");
+
+    /* 启动调度器 (会自动创建 0 级的 IDLE 任务) */
+    vTaskStartScheduler();
+
+    /* 检查 0 级优先级就绪链表 */
+    List_t * pxIdleList = &( pxReadyTasksLists[ 0 ] );
+    printf("IDLE 任务所在就绪链表节点数: %u (期望: 1)\n", (unsigned int)pxIdleList->uxNumberOfItems);
+
+    ListItem_t * pxHead = listGET_HEAD_ENTRY( pxIdleList );
+    TCB_t * pxIdleTCB = ( TCB_t * ) listGET_LIST_ITEM_OWNER( pxHead );
+
+    printf("0 级就绪链表首个任务名: %s (期望: IDLE)\n", pxIdleTCB->pcTaskName);
+    printf("0 级就绪链表首个任务优先级: %u (期望: 0)\n", (unsigned int)pxIdleTCB->uxPriority);
+
+    printf("======================================================================\n\n");
 }
 
 /* ------------------ 主入口 ------------------ */
@@ -131,6 +148,7 @@ int main() {
   /* 依次运行历史与新增的测试模块 */
   test_list_module();
   test_task_module();
+  test_scheduler_module();
 
   return 0;
 }

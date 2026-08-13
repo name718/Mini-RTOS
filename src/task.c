@@ -80,3 +80,29 @@ TaskHandle_t xTaskCreateStatic(TaskFunction_t pxTaskCode,
   /* 6. 返回任务句柄 (TCB 指针) */
   return (TaskHandle_t)pxNewTCB;
 }
+
+/* 定义空闲任务的静态 TCB 与栈空间 */
+static TCB_t xIdleTaskTCB;
+static StackType_t uxIdleTaskStack[configMINIMAL_STACK_SIZE];
+
+/* 空闲任务函数：当无其他任务就绪时运行 */
+static void prvIdleTask(void *pvParameters) {
+  (void)pvParameters;
+  for (;;) {
+    /* 空闲任务死循环(以后可以在这里加入低功耗休眠指令 WFI) */
+  }
+}
+
+/* 启动调度器 */
+void vTaskStartScheduler(void) {
+  /* 1. 初始化就绪链表数组 (若尚未初始化) */
+  prvInitialiseTaskLists();
+  /* 1. 静态创建最低优先级 (0) 的空闲任务 */
+  xTaskCreateStatic(prvIdleTask, "IDLE", configMINIMAL_STACK_SIZE, NULL,
+                    (UBaseType_t)0U, uxIdleTaskStack, &xIdleTaskTCB);
+  /* 2. 硬件层启动调度器 (初始化 SysTick定时器并启动第一个任务) */
+  /* 稍后我们将在 port.c 中实现xPortStartScheduler() */
+  if (xPortStartScheduler() != 0) {
+    /* 启动成功，此后 CPU 将接管运行任务 */
+  }
+}

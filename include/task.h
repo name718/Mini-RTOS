@@ -43,4 +43,7 @@ TaskHandle_t xTaskCreateStatic(TaskFunction_t pxTaskCode,
 /* 7. 初始化调度器列表 (初始化就绪链表数组) */
 void prvInitialiseTaskLists(void);
 
+/* 8. 启动任务调度器 */
+void vTaskStartScheduler(void);
+
 #endif
