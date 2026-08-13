@@ -60,6 +60,12 @@ typedef struct xLIST {
 #define listLIST_IS_EMPTY(pxList)                                              \
   ((BaseType_t)((pxList)->uxNumberOfItems == (UBaseType_t)0))
 
+/* 获取节点的下一个节点 */
+#define listGET_NEXT(pxListItem) ((pxListItem)->pxNext)
+
+/* 获取链表的尾部哨兵节点指针（用作遍历结束的判断标记） */
+#define listGET_END_MARKER(pxList) ((ListItem_t *)&((pxList)->xListEnd))
+
 /* 5. 核心 API 函数声明 */
 /* 初始化链表头 */
 void vListInitialise(List_t *const pxList);
