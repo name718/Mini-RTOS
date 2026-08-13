@@ -4,11 +4,23 @@
 /* 定义全局指针：指向当前正在运行的任务 TCB */
 TCB_t *volatile pxCurrentTCB = NULL;
 
+/* 核心数据结构：就绪任务链表数组 (优先级从 0 到configMAX_PRIORITIES - 1) */
+List_t pxReadyTasksLists[configMAX_PRIORITIES];
+
+/* 初始化所有优先级的就绪链表 */
+void prvInitialiseTaskLists(void) {
+  UBaseType_t uxPriority;
+  for (uxPriority = (UBaseType_t)0U;
+       uxPriority < (UBaseType_t)configMAX_PRIORITIES; uxPriority++) {
+    vListInitialise(&(pxReadyTasksLists[uxPriority]));
+  }
+}
+
 /* 静态创建任务函数 */
 TaskHandle_t xTaskCreateStatic(TaskFunction_t pxTaskCode,
                                const char *const pcName,
                                const uint32_t ulStackDepth,
-                               void *const pvParameters,
+                               void *const pvParameters, UBaseType_t uxPriority,
                                StackType_t *const puxStackBuffer,
                                TCB_t *const pxTaskBuffer) {
   TCB_t *pxNewTCB;
@@ -19,6 +31,12 @@ TaskHandle_t xTaskCreateStatic(TaskFunction_t pxTaskCode,
   if ((pxTaskBuffer != NULL) && (puxStackBuffer != NULL)) {
     pxNewTCB = pxTaskBuffer;
     pxNewTCB->pxStack = puxStackBuffer;
+
+    if (uxPriority >= configMAX_PRIORITIES) {
+      uxPriority = configMAX_PRIORITIES - 1;
+    }
+
+    pxNewTCB->uxPriority = uxPriority;
 
     /* 2. 计算初始栈顶物理地址（满递减栈：栈顶为数组最后一个元素） */
     pxTopOfStack = &(puxStackBuffer[ulStackDepth - (uint32_t)1]);
@@ -46,6 +64,15 @@ TaskHandle_t xTaskCreateStatic(TaskFunction_t pxTaskCode,
      * 的pxTopOfStack */
     pxNewTCB->pxTopOfStack =
         pxPortInitialiseStack(pxTopOfStack, pxTaskCode, pvParameters);
+
+    /* 挂载到就绪链表 */
+    vListInsertEnd(&(pxReadyTasksLists[uxPriority]),
+                   &(pxNewTCB->xStateListItem));
+
+    /* 更新最高优先级当前任务指针 */
+    if ((pxCurrentTCB == NULL) || (pxCurrentTCB->uxPriority < uxPriority)) {
+      pxCurrentTCB = pxNewTCB;
+    }
   } else {
     pxNewTCB = NULL;
   }

@@ -45,10 +45,14 @@ void test_list_module(void) {
   printf("END\n\n");
 }
 
-/* ------------------ 模块二：任务创建与栈解剖单元测试 ------------------ */
+/* ------------------ 模块二：任务创建、栈解剖与多优先级测试 ------------------
+ */
 #define TASK_STACK_SIZE 128
 static StackType_t ucTask1Stack[TASK_STACK_SIZE];
 static TCB_t xTask1TCB;
+
+static StackType_t ucTask2Stack[TASK_STACK_SIZE];
+static TCB_t xTask2TCB;
 
 void vTask1(void *pvParameters) {
   printf("Task 1 is running with parameter: %s\n", (char *)pvParameters);
@@ -56,21 +60,32 @@ void vTask1(void *pvParameters) {
   }
 }
 
+void vTask2(void *pvParameters) {
+  (void)pvParameters;
+  while (1) {
+  }
+}
+
 void test_task_module(void) {
-  printf(
-      "================ [模块测试 2] MiniRTOS 任务静态创建 ================\n");
+  printf("================ [模块测试 2] MiniRTOS 任务静态创建与就绪列表 "
+         "================\n");
 
-  TaskHandle_t xHandle =
+  /* 1. 初始化所有优先级的就绪链表数组 */
+  prvInitialiseTaskLists();
+
+  /* 2. 创建 Task 1 (优先级 1) */
+  TaskHandle_t xHandle1 =
       xTaskCreateStatic(vTask1, "Task_1", TASK_STACK_SIZE, (void *)0x12345678,
-                        ucTask1Stack, &xTask1TCB);
+                        1, ucTask1Stack, &xTask1TCB);
 
-  TCB_t *pxTCB = (TCB_t *)xHandle;
+  TCB_t *pxTCB1 = (TCB_t *)xHandle1;
 
-  printf("任务创建成功！任务名: %s\n", pxTCB->pcTaskName);
+  printf("Task_1 创建成功！任务名: %s, 优先级: %u\n", pxTCB1->pcTaskName,
+         (unsigned int)pxTCB1->uxPriority);
   printf("栈基地址: %p, 当前伪造栈顶 pxTopOfStack: %p\n",
-         (void *)pxTCB->pxStack, (void *)pxTCB->pxTopOfStack);
+         (void *)pxTCB1->pxStack, (void *)pxTCB1->pxTopOfStack);
 
-  StackType_t *pxStackPointer = (StackType_t *)pxTCB->pxTopOfStack;
+  StackType_t *pxStackPointer = (StackType_t *)pxTCB1->pxTopOfStack;
 
   printf("\n伪造任务栈内存寄存器上下文解剖 (自低地址至高地址):\n");
   printf("  --------------------------------------------------\n");
@@ -93,7 +108,22 @@ void test_task_module(void) {
          (void *)(uintptr_t)pxStackPointer[14], pxStackPointer[14]);
   printf("  | [xPSR]: 0x%08X (期望 Thumb bit24 1: 0x01000000)\n",
          pxStackPointer[15]);
-  printf("  --------------------------------------------------\n\n");
+  printf("  --------------------------------------------------\n");
+
+  printf("\n[测试 3] 创建 Task_1 后，pxCurrentTCB 指向: %s (优先级: %u)\n",
+         pxCurrentTCB->pcTaskName, (unsigned int)pxCurrentTCB->uxPriority);
+
+  /* 3. 创建更高优先级的 Task 2 (优先级 3) */
+  printf("\n创建高优先级的 Task_2 (优先级 3)...\n");
+  xTaskCreateStatic(vTask2, "Task_2", TASK_STACK_SIZE, NULL, 3, ucTask2Stack,
+                    &xTask2TCB);
+
+  printf(
+      "[测试 4] 创建 Task_2 后，pxCurrentTCB 自动抢占更新为: %s (优先级: %u)\n",
+      pxCurrentTCB->pcTaskName, (unsigned int)pxCurrentTCB->uxPriority);
+
+  printf("====================================================================="
+         "=\n\n");
 }
 
 /* ------------------ 主入口 ------------------ */

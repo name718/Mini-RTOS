@@ -1,6 +1,7 @@
 #ifndef TASK_H
 #define TASK_H
 
+#include "./FreeRTOSConfig.h"
 #include "./list.h"
 
 /* 1. 架构相关的栈数据类型 (32位 ARM Cortex-M 架构，栈为 32 位/4字节对齐) */
@@ -32,9 +33,14 @@ extern TCB_t *volatile pxCurrentTCB;
 typedef void *TaskHandle_t;
 
 /* 6. 静态创建任务 API 声明 */
-TaskHandle_t
-xTaskCreateStatic(TaskFunction_t pxTaskCode, const char *const pcName,
-                  const uint32_t ulStackDepth, void *const pvParameters,
-                  StackType_t *const puxStackBuffer, TCB_t *const pxTaskBuffer);
+TaskHandle_t xTaskCreateStatic(TaskFunction_t pxTaskCode,
+                               const char *const pcName,
+                               const uint32_t ulStackDepth,
+                               void *const pvParameters, UBaseType_t uxPriority,
+                               StackType_t *const puxStackBuffer,
+                               TCB_t *const pxTaskBuffer);
+
+/* 7. 初始化调度器列表 (初始化就绪链表数组) */
+void prvInitialiseTaskLists(void);
 
 #endif
