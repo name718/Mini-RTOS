@@ -64,3 +64,22 @@ void vListInsert(List_t *const pxList, ListItem_t *const pxNewListItem) {
   /* 4. 链表节点数加 1 */
   (pxList->uxNumberOfItems)++;
 }
+
+/* 5. 从链表中移除指定节点 */
+UBaseType_t uxListRemove(ListItem_t *const pxItemToRemove) {
+  /* 获取该节点当前所在的链表容器 */
+  List_t *const pxList = (List_t *)pxItemToRemove->pxContainer;
+  /* 1. 将节点从双向链表中解绑 */
+  pxItemToRemove->pxNext->pxPrevious = pxItemToRemove->pxPrevious;
+  pxItemToRemove->pxPrevious->pxNext = pxItemToRemove->pxNext;
+  /* 2. 关键边界处理：如果游标 pxIndex正好指向被删除节点，将游标后退一步 */
+  if (pxList->pxIndex == pxItemToRemove) {
+    pxList->pxIndex = pxItemToRemove->pxPrevious;
+  }
+  /* 3. 清空节点的容器指针 */
+  pxItemToRemove->pxContainer = NULL;
+  /* 4. 链表节点数减 1 */
+  (pxList->uxNumberOfItems)--;
+  /* 5. 返回移除后链表中剩余的节点数量 */
+  return pxList->uxNumberOfItems;
+}
