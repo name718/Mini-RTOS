@@ -19,3 +19,21 @@ void vListInitialiseItem(ListItem_t *const pxItem) {
   /* 节点刚创建时，并不属于任何链表，因此容器指针置NULL */
   pxItem->pxContainer = NULL;
 }
+
+/* 3. 插入节点到链表末尾（相对 pxIndex游标的位置） */
+void vListInsertEnd(List_t *const pxList, ListItem_t *const pxNewListItem) {
+  /* 获取当前的游标指针 */
+  ListItem_t *const pxIndex = pxList->pxIndex;
+  /* 1. 让新节点的 pxNext 指向 pxIndex */
+  pxNewListItem->pxNext = pxIndex;
+  /* 2. 让新节点的 pxPrevious 指向原先pxIndex 的前一个节点 */
+  pxNewListItem->pxPrevious = pxIndex->pxPrevious;
+  /* 3. 修改原先 pxIndex 前节点的pxNext，指向新节点 */
+  pxIndex->pxPrevious->pxNext = pxNewListItem;
+  /* 4. 修改 pxIndex 的pxPrevious，指向新节点 */
+  pxIndex->pxPrevious = pxNewListItem;
+  /* 5. 标记该节点当前被哪一个链表收容 */
+  pxNewListItem->pxContainer = (void *)pxList;
+  /* 6. 链表节点数加 1 */
+  (pxList->uxNumberOfItems)++;
+}
