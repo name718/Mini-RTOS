@@ -37,3 +37,30 @@ void vListInsertEnd(List_t *const pxList, ListItem_t *const pxNewListItem) {
   /* 6. 链表节点数加 1 */
   (pxList->uxNumberOfItems)++;
 }
+
+/* 4. 按 xItemValue 的值升序插入节点 */
+void vListInsert(List_t *const pxList, ListItem_t *const pxNewListItem) {
+  ListItem_t *pxIterator;
+  const TickType_t xValueOfInsertion = pxNewListItem->xItemValue;
+  /* 1. 寻找插入点 */
+  if (xValueOfInsertion == portMAX_DELAY) {
+    /* 若值为最大值，直接插在哨兵节点的前面*/
+    pxIterator = pxList->xListEnd.pxPrevious;
+  } else {
+    /* 从头（哨兵）开始遍历，找到第一个大于插入值的节点位置 */
+    for (pxIterator = (ListItem_t *)&(pxList->xListEnd);
+         pxIterator->pxNext->xItemValue <= xValueOfInsertion;
+         pxIterator = pxIterator->pxNext) {
+      /* 循环体内无需做任何操作 */
+    }
+  }
+  /* 2. 将 pxNewListItem 插入到 pxIterator的后面 */
+  pxNewListItem->pxNext = pxIterator->pxNext;
+  pxNewListItem->pxNext->pxPrevious = pxNewListItem;
+  pxNewListItem->pxPrevious = pxIterator;
+  pxIterator->pxNext = pxNewListItem;
+  /* 3. 标记该节点当前被哪一个链表收容 */
+  pxNewListItem->pxContainer = (void *)pxList;
+  /* 4. 链表节点数加 1 */
+  (pxList->uxNumberOfItems)++;
+}
