@@ -46,4 +46,10 @@ void prvInitialiseTaskLists(void);
 /* 8. 启动任务调度器 */
 void vTaskStartScheduler(void);
 
+/* 9. 任务延时函数 (单位: SysTick 滴答数) */
+void vTaskDelay(const TickType_t xTicksToWait);
+
+/* 10.滴答定时器中断处理：时间自增与到期任务唤醒 */
+BaseType_t xTaskIncrementTick(void);
+
 #endif

@@ -7,6 +7,15 @@ TCB_t *volatile pxCurrentTCB = NULL;
 /* 核心数据结构：就绪任务链表数组 (优先级从 0 到configMAX_PRIORITIES - 1) */
 List_t pxReadyTasksLists[configMAX_PRIORITIES];
 
+/* 全局滴答时间计数器 */
+static volatile TickType_t xTickCount = (TickType_t)0U;
+
+/* 双延时链表实体与指针 */
+static List_t xDelayedTaskList1;
+static List_t xDelayedTaskList2;
+static List_t *volatile pxDelayedTaskList = NULL;
+static List_t *volatile pxOverflowDelayedTaskList = NULL;
+
 /* 初始化所有优先级的就绪链表 */
 void prvInitialiseTaskLists(void) {
   UBaseType_t uxPriority;
@@ -14,6 +23,12 @@ void prvInitialiseTaskLists(void) {
        uxPriority < (UBaseType_t)configMAX_PRIORITIES; uxPriority++) {
     vListInitialise(&(pxReadyTasksLists[uxPriority]));
   }
+
+  /* 初始化双延时链表 */
+  vListInitialise(&xDelayedTaskList1);
+  vListInitialise(&xDelayedTaskList2);
+  pxDelayedTaskList = &xDelayedTaskList1;
+  pxOverflowDelayedTaskList = &xDelayedTaskList2;
 }
 
 /* 静态创建任务函数 */
@@ -105,4 +120,80 @@ void vTaskStartScheduler(void) {
   if (xPortStartScheduler() != 0) {
     /* 启动成功，此后 CPU 将接管运行任务 */
   }
+}
+
+/* 将当前任务加入延时链表的内部辅助函数 */
+static void prvAddCurrentTaskToDelayedList(TickType_t xTicksToWait) {
+  TickType_t xTimeToWake;
+  const TickType_t xConstTickCount = xTickCount;
+
+  /* 1. 将当前任务从就绪列表中剥离移除 */
+  (void)uxListRemove(&(pxCurrentTCB->xStateListItem));
+
+  /* 2. 计算唤醒时刻 */
+  xTimeToWake = xConstTickCount + xTicksToWait;
+
+  /* 3. 将节点的 xItemValue 设为唤醒时刻 (供vListInsert 升序排序) */
+  listSET_LIST_ITEM_VALUE(&(pxCurrentTCB->xStateListItem), xTimeToWake);
+
+  /* 4. 判断是否发生了 32 位溢出回绕 */
+  if (xTimeToWake < xConstTickCount) {
+    /* 溢出：插入到溢出延时链表 */
+    vListInsert(pxOverflowDelayedTaskList, &(pxCurrentTCB->xStateListItem));
+  } else {
+    /* 未溢出：插入到当前周期的延时链表 */
+    vListInsert(pxDelayedTaskList, &(pxCurrentTCB->xStateListItem));
+  }
+}
+
+/* 任务延时 API */
+void vTaskDelay(const TickType_t xTicksToWait) {
+  if (xTicksToWait > (TickType_t)0U) {
+    /* 1.将当前任务移出就绪链表，加入延时链表 */
+    prvAddCurrentTaskToDelayedList(xTicksToWait);
+  }
+}
+
+/* 滴答定时器自增与延时唤醒处理 */
+BaseType_t xTaskIncrementTick(void) {
+  TCB_t *pxTCB;
+  TickType_t xItemValue;
+  BaseType_t xSwitchRequired = 0;
+
+  /* 1. 自增 32 位 Tick 计数器 */
+  const TickType_t xConstTickCount = xTickCount + (TickType_t)1U;
+  xTickCount = xConstTickCount;
+
+  /* 2. 关键核心：32位溢出判断与双延时链表指针交换 */
+  if (xConstTickCount == (TickType_t)0U) {
+    List_t *pxTemp = pxDelayedTaskList;
+    pxDelayedTaskList = pxOverflowDelayedTaskList;
+    pxOverflowDelayedTaskList = pxTemp;
+  }
+
+  /* 3. 检查当前延时链表是否有到期任务 */
+  if (listLIST_IS_EMPTY(pxDelayedTaskList) == 0) {
+    ListItem_t *pxListItem = listGET_HEAD_ENTRY(pxDelayedTaskList);
+    while (pxListItem != listGET_END_MARKER(pxDelayedTaskList)) {
+      xItemValue = listGET_LIST_ITEM_VALUE(pxListItem);
+      /* 如果当前时间还没到解封时刻，直接退出（链表已升序排列） */
+      if (xConstTickCount < xItemValue) {
+        break;
+      }
+      /* 到期！从延时链表剥离 */
+      (void)uxListRemove(pxListItem);
+      /* 获取 TCB并重新挂载回对应的就绪链表尾部 */
+      pxTCB = (TCB_t *)listGET_LIST_ITEM_OWNER(pxListItem);
+      vListInsertEnd(&(pxReadyTasksLists[pxTCB->uxPriority]),
+                     &(pxTCB->xStateListItem));
+
+      /* 若被唤醒的任务优先级高于或等于当前任务，请求上下文切换 */
+      if (pxTCB->uxPriority >= pxCurrentTCB->uxPriority) {
+        xSwitchRequired = 1;
+      }
+      /* 重新获取链表头节点，继续检查下一个 */
+      pxListItem = listGET_HEAD_ENTRY(pxDelayedTaskList);
+    }
+  }
+  return xSwitchRequired;
 }
