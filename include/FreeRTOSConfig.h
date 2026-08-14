@@ -7,4 +7,7 @@
 /* 最小任务栈空间大小 (字数/Word，即 128 * 4 =512 字节) */
 #define configMINIMAL_STACK_SIZE ((uint16_t)128)
 
+/* 系统总动态堆内存大小 (4 * 1024 = 4096字节) */
+#define configTOTAL_HEAP_SIZE ((size_t)(4 * 1024))
+
 #endif /* FREERTOS_CONFIG_H */

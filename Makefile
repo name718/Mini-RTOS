@@ -8,7 +8,7 @@ BUILD_DIR = build
 TEST_DIR = tests
 
 # Core source files (excluding main.c)
-CORE_SRCS = $(SRC_DIR)/list.c $(SRC_DIR)/port.c $(SRC_DIR)/task.c
+CORE_SRCS = $(SRC_DIR)/list.c $(SRC_DIR)/port.c $(SRC_DIR)/task.c $(SRC_DIR)/heap_4.c
 CORE_OBJS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(CORE_SRCS))
 
 # Main App Target

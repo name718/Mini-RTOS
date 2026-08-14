@@ -1,4 +1,5 @@
 #include "../include/list.h"
+#include "../include/portable.h"
 #include "../include/task.h"
 #include "unity/unity.h"
 
@@ -143,6 +144,31 @@ void test_RoundRobin_Scheduling(void) {
   TEST_ASSERT_EQUAL_STRING("TaskA", pxCurrentTCB->pcTaskName);
 }
 
+/* ------------------ Test Suite 5: Heap_4 Memory Management ------------------
+ */
+void test_Heap4_Malloc_Free_And_Coalescing(void) {
+  size_t initialFreeSize = xPortGetFreeHeapSize();
+  TEST_ASSERT_TRUE(initialFreeSize > 0);
+
+  /* Allocate 100 bytes */
+  void *p1 = pvPortMalloc(100);
+  TEST_ASSERT_NOT_NULL(p1);
+  size_t freeAfterP1 = xPortGetFreeHeapSize();
+  TEST_ASSERT_TRUE(freeAfterP1 < initialFreeSize);
+
+  /* Allocate 200 bytes */
+  void *p2 = pvPortMalloc(200);
+  TEST_ASSERT_NOT_NULL(p2);
+
+  /* Free p1 and p2 */
+  vPortFree(p1);
+  vPortFree(p2);
+
+  /* Verify memory coalesced back to initial size */
+  TEST_ASSERT_EQUAL_UINT32((uint32_t)initialFreeSize,
+                           (uint32_t)xPortGetFreeHeapSize());
+}
+
 int main(void) {
   UNITY_BEGIN();
 
@@ -158,6 +184,9 @@ int main(void) {
 
   /* Suite 4: Round-Robin */
   RUN_TEST(test_RoundRobin_Scheduling);
+
+  /* Suite 5: Heap_4 */
+  RUN_TEST(test_Heap4_Malloc_Free_And_Coalescing);
 
   return UNITY_END();
 }
