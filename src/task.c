@@ -197,3 +197,17 @@ BaseType_t xTaskIncrementTick(void) {
   }
   return xSwitchRequired;
 }
+
+/* 上下文切换选择器：选择下一个要运行的任务 */
+void vTaskSwitchContext(void) {
+  UBaseType_t uxTopPriority =
+      (UBaseType_t)configMAX_PRIORITIES - (UBaseType_t)1U;
+  /* 1.从最高优先级向下查找第一个非空的就绪链表 */
+  while (listLIST_IS_EMPTY(&(pxReadyTasksLists[uxTopPriority])) != 0) {
+    uxTopPriority--;
+  }
+  /* 2. 利用 listGET_OWNER_OF_NEXT_ENTRY宏挪动游标 pxIndex，获取下一个就绪任务
+   */
+  listGET_OWNER_OF_NEXT_ENTRY(pxCurrentTCB,
+                              &(pxReadyTasksLists[uxTopPriority]));
+}

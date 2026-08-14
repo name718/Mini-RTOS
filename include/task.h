@@ -52,4 +52,7 @@ void vTaskDelay(const TickType_t xTicksToWait);
 /* 10.滴答定时器中断处理：时间自增与到期任务唤醒 */
 BaseType_t xTaskIncrementTick(void);
 
+/* 11. 任务上下文切换选择器(挑选下一个最高优/轮转任务) */
+void vTaskSwitchContext(void);
+
 #endif

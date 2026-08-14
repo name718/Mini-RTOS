@@ -157,11 +157,9 @@ void test_delay_module(void) {
   printf("================ [模块测试 4] vTaskDelay 延时与 SysTick 中断唤醒 "
          "================\n");
 
-  /* 重置就绪链表与当前指针 */
   prvInitialiseTaskLists();
   pxCurrentTCB = NULL;
 
-  /* 创建 Task_Delay (优先级 2)，此后 pxCurrentTCB 必然指向 Task_Delay */
   xTaskCreateStatic(vTask1, "Task_Delay", TASK_STACK_SIZE, NULL, 2,
                     ucTask1Stack, &xTask1TCB);
 
@@ -169,7 +167,6 @@ void test_delay_module(void) {
   printf("延时前：Task_Delay 所在 2 级就绪链表节点数: %u (期望: 1)\n",
          (unsigned int)pxReadyList->uxNumberOfItems);
 
-  /* Task_Delay 调用 vTaskDelay(5)，休眠 5 个 Tick */
   printf("Task_Delay 调用 vTaskDelay(5)...\n");
   vTaskDelay(5);
 
@@ -177,7 +174,6 @@ void test_delay_module(void) {
          "已成功移出就绪链表)\n",
          (unsigned int)pxReadyList->uxNumberOfItems);
 
-  /* 模拟滴答时钟 SysTick 自增 1~5 个 Tick */
   int i;
   for (i = 1; i <= 5; i++) {
     BaseType_t xYieldNeeded = xTaskIncrementTick();
@@ -190,12 +186,44 @@ void test_delay_module(void) {
          "=\n\n");
 }
 
+/* ------------------ 模块五：同优先级时间片轮转 (Round-Robin) 测试
+ * ------------------ */
+void test_rr_module(void) {
+  printf("================ [模块测试 5] 同优先级时间片轮转 (Round-Robin) "
+         "================\n");
+
+  prvInitialiseTaskLists();
+  pxCurrentTCB = NULL;
+
+  /* 创建同为 2 级优先级的 Task_A 和 Task_B */
+  xTaskCreateStatic(vTask1, "Task_A", TASK_STACK_SIZE, NULL, 2, ucTask1Stack,
+                    &xTask1TCB);
+  xTaskCreateStatic(vTask2, "Task_B", TASK_STACK_SIZE, NULL, 2, ucTask2Stack,
+                    &xTask2TCB);
+
+  printf(
+      "初始就绪列表 (优先级 2): Task_A 和 Task_B, pxCurrentTCB 当前指向: %s\n",
+      pxCurrentTCB->pcTaskName);
+
+  /* 模拟 3 次 vTaskSwitchContext() 时间片轮转 */
+  int step;
+  for (step = 1; step <= 3; step++) {
+    vTaskSwitchContext();
+    printf(" -> 第 %d 次触发 vTaskSwitchContext(), 游标移动切换到: %s\n", step,
+           pxCurrentTCB->pcTaskName);
+  }
+
+  printf("====================================================================="
+         "=\n\n");
+}
+
 /* ------------------ 主入口 ------------------ */
 int main() {
   test_list_module();
   test_task_module();
   test_scheduler_module();
   test_delay_module();
+  test_rr_module();
 
   return 0;
 }

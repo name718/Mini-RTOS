@@ -66,6 +66,17 @@ typedef struct xLIST {
 /* 获取链表的尾部哨兵节点指针（用作遍历结束的判断标记） */
 #define listGET_END_MARKER(pxList) ((ListItem_t *)&((pxList)->xListEnd))
 
+/* 轮转游标 pxIndex，获取下一个就绪任务的 Owner (TCB 指针) */
+#define listGET_OWNER_OF_NEXT_ENTRY(pxTCB, pxList)                             \
+  {                                                                            \
+    List_t *const pxConstList = (pxList);                                      \
+    (pxConstList)->pxIndex = (pxConstList)->pxIndex->pxNext;                   \
+    if ((void *)(pxConstList)->pxIndex ==                                      \
+        (void *)&((pxConstList)->xListEnd)) {                                  \
+      (pxConstList)->pxIndex = (pxConstList)->pxIndex->pxNext;                 \
+    }                                                                          \
+    (pxTCB) = (pxConstList)->pxIndex->pvOwner;                                 \
+  }
 /* 5. 核心 API 函数声明 */
 /* 初始化链表头 */
 void vListInitialise(List_t *const pxList);
