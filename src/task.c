@@ -42,6 +42,11 @@ TaskHandle_t xTaskCreateStatic(TaskFunction_t pxTaskCode,
   StackType_t *pxTopOfStack;
   UBaseType_t x;
 
+  /* 自动防护：若就绪链表尚未初始化，自动进行初始化 */
+  if (pxReadyTasksLists[0].pxIndex == NULL) {
+    prvInitialiseTaskLists();
+  }
+
   /* 1. 安全检查：确保用户传入的 TCB 和 栈数组指针不为空 */
   if ((pxTaskBuffer != NULL) && (puxStackBuffer != NULL)) {
     pxNewTCB = pxTaskBuffer;
