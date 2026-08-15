@@ -3,6 +3,11 @@
 
 #include "./FreeRTOSConfig.h"
 #include "./list.h"
+#include <stdint.h>
+
+#define pdPASS ((BaseType_t)1)
+#define pdFAIL ((BaseType_t)0)
+#define errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY ((BaseType_t) - 1)
 
 /* 1. 架构相关的栈数据类型 (32位 ARM Cortex-M 架构，栈为 32 位/4字节对齐) */
 typedef uint32_t StackType_t;
@@ -39,6 +44,15 @@ TaskHandle_t xTaskCreateStatic(TaskFunction_t pxTaskCode,
                                void *const pvParameters, UBaseType_t uxPriority,
                                StackType_t *const puxStackBuffer,
                                TCB_t *const pxTaskBuffer);
+
+/* 12. 动态创建任务 API 声明 */
+BaseType_t xTaskCreate(TaskFunction_t pxTaskCode, const char *const pcName,
+                       const uint16_t usStackDepth, void *const pvParameters,
+                       UBaseType_t uxPriority,
+                       TaskHandle_t *const pxCreatedTask);
+
+/* 13. 动态删除任务 API 声明 */
+void vTaskDelete(TaskHandle_t xTaskToDelete);
 
 /* 7. 初始化调度器列表 (初始化就绪链表数组) */
 void prvInitialiseTaskLists(void);

@@ -169,6 +169,33 @@ void test_Heap4_Malloc_Free_And_Coalescing(void) {
                            (uint32_t)xPortGetFreeHeapSize());
 }
 
+/* ------------------ Test Suite 6: Dynamic Task Creation & Deletion
+ * ------------------ */
+void test_Task_DynamicCreate_And_Delete(void) {
+  prvInitialiseTaskLists();
+  pxCurrentTCB = NULL;
+
+  size_t initialFreeHeap = xPortGetFreeHeapSize();
+  TaskHandle_t dynTaskHandle = NULL;
+
+  /* Create dynamic task with priority 3 */
+  BaseType_t status =
+      xTaskCreate(dummyTaskFunc, "DynTask", 128, NULL, 3, &dynTaskHandle);
+
+  TEST_ASSERT_EQUAL_INT(pdPASS, status);
+  TEST_ASSERT_NOT_NULL(dynTaskHandle);
+  TEST_ASSERT_EQUAL_PTR(dynTaskHandle, pxCurrentTCB);
+  TEST_ASSERT_EQUAL_STRING("DynTask", pxCurrentTCB->pcTaskName);
+  TEST_ASSERT_TRUE(xPortGetFreeHeapSize() < initialFreeHeap);
+
+  /* Delete dynamic task */
+  vTaskDelete(dynTaskHandle);
+
+  /* Verify heap memory returned back to initial heap size */
+  TEST_ASSERT_EQUAL_UINT32((uint32_t)initialFreeHeap,
+                           (uint32_t)xPortGetFreeHeapSize());
+}
+
 int main(void) {
   UNITY_BEGIN();
 
@@ -187,6 +214,9 @@ int main(void) {
 
   /* Suite 5: Heap_4 */
   RUN_TEST(test_Heap4_Malloc_Free_And_Coalescing);
+
+  /* Suite 6: Dynamic Task Create & Delete */
+  RUN_TEST(test_Task_DynamicCreate_And_Delete);
 
   return UNITY_END();
 }

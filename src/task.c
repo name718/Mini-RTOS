@@ -1,5 +1,6 @@
 #include "../include/task.h"
 #include "../include/port.h"
+#include "../include/portable.h"
 
 /* 定义全局指针：指向当前正在运行的任务 TCB */
 TCB_t *volatile pxCurrentTCB = NULL;
@@ -99,6 +100,40 @@ TaskHandle_t xTaskCreateStatic(TaskFunction_t pxTaskCode,
 
   /* 6. 返回任务句柄 (TCB 指针) */
   return (TaskHandle_t)pxNewTCB;
+}
+
+/* 动态创建任务 API */
+BaseType_t xTaskCreate(TaskFunction_t pxTaskCode, const char *const pcName,
+                       const uint16_t usStackDepth, void *const pvParameters,
+                       UBaseType_t uxPriority,
+                       TaskHandle_t *const pxCreatedTask) {
+
+  TCB_t *pxNewTCB;
+  StackType_t *pxStackBuffer;
+  BaseType_t xReturn = errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY;
+  /* 1. 动态分配任务栈空间 */
+  pxStackBuffer =
+      (StackType_t *)pvPortMalloc(((size_t)usStackDepth) * sizeof(StackType_t));
+
+  if (pxStackBuffer != NULL) {
+    /* 2.动态分配 TCB 结构体 */
+    pxNewTCB = (TCB_t *)pvPortMalloc(sizeof(TCB_t));
+    if (pxNewTCB != NULL) {
+      /* 3. 调用 xTaskCreateStatic 完成 TCB与栈帧初始化及就绪链表挂载 */
+      (void)xTaskCreateStatic(pxTaskCode, pcName, (uint32_t)usStackDepth,
+                              pvParameters, uxPriority, pxStackBuffer,
+                              pxNewTCB);
+      /* 4. 如果用户传入了输出句柄指针，输出 TCB 指针 */
+      if (pxCreatedTask != NULL) {
+        *pxCreatedTask = (TaskHandle_t)pxNewTCB;
+      }
+      xReturn = pdPASS;
+    } else {
+      /* TCB 分配失败，释放已分配的任务栈 */
+      vPortFree(pxStackBuffer);
+    }
+  }
+  return xReturn;
 }
 
 /* 定义空闲任务的静态 TCB 与栈空间 */
@@ -207,12 +242,53 @@ BaseType_t xTaskIncrementTick(void) {
 void vTaskSwitchContext(void) {
   UBaseType_t uxTopPriority =
       (UBaseType_t)configMAX_PRIORITIES - (UBaseType_t)1U;
-  /* 1.从最高优先级向下查找第一个非空的就绪链表 */
-  while (listLIST_IS_EMPTY(&(pxReadyTasksLists[uxTopPriority])) != 0) {
+  /* 1. 从最高优先级向下查找第一个非空的就绪链表 (加边界防保护 uxTopPriority > 0) */
+  while ((uxTopPriority > 0) &&
+         (listLIST_IS_EMPTY(&(pxReadyTasksLists[uxTopPriority])) != 0)) {
     uxTopPriority--;
   }
-  /* 2. 利用 listGET_OWNER_OF_NEXT_ENTRY宏挪动游标 pxIndex，获取下一个就绪任务
-   */
-  listGET_OWNER_OF_NEXT_ENTRY(pxCurrentTCB,
-                              &(pxReadyTasksLists[uxTopPriority]));
+
+  if (listLIST_IS_EMPTY(&(pxReadyTasksLists[uxTopPriority])) == 0) {
+    /* 2. 利用 listGET_OWNER_OF_NEXT_ENTRY 宏挪动游标 pxIndex，获取下一个就绪任务 */
+    listGET_OWNER_OF_NEXT_ENTRY(pxCurrentTCB,
+                                &(pxReadyTasksLists[uxTopPriority]));
+  } else {
+    pxCurrentTCB = NULL;
+  }
+}
+
+/* 动态删除任务 API */
+void vTaskDelete(TaskHandle_t xTaskToDelete) {
+  TCB_t *pxTCB;
+  BaseType_t xDeletingCurrentTask = 0;
+
+  /* 1. 若入参为 NULL，代表删除当前正在运行的任务 */
+  if (xTaskToDelete == NULL) {
+    pxTCB = pxCurrentTCB;
+  } else {
+    pxTCB = (TCB_t *)xTaskToDelete;
+  }
+
+  if (pxTCB != NULL) {
+    if (pxTCB == pxCurrentTCB) {
+      xDeletingCurrentTask = 1;
+    }
+
+    /* 2. 将任务节点从其所在链表中解除挂载 */
+    (void)uxListRemove(&(pxTCB->xStateListItem));
+
+    /* 3. 释放动态分配的任务栈和 TCB 内存 */
+    if (pxTCB->pxStack != NULL) {
+      vPortFree(pxTCB->pxStack);
+      pxTCB->pxStack = NULL;
+    }
+
+    vPortFree(pxTCB);
+
+    /* 4. 若删除的是当前正在运行的任务，重置 pxCurrentTCB 并重新选出新任务 */
+    if (xDeletingCurrentTask != 0) {
+      pxCurrentTCB = NULL;
+      vTaskSwitchContext();
+    }
+  }
 }
