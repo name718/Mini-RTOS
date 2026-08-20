@@ -85,36 +85,69 @@ static void prvCopyDataFromQueue(Queue_t *const pxQueue, void *const pvBuffer) {
   pxQueue->uxMessagesWaiting--;
 }
 
-/* 2. 发送消息到队列 API */
+/* 2. 发送消息到队列 API (支持超时阻塞与唤醒接收任务) */
 BaseType_t xQueueSend(QueueHandle_t xQueue, const void *pvItemToQueue,
                       TickType_t xTicksToWait) {
   Queue_t *const pxQueue = (Queue_t *)xQueue;
-  (void)xTicksToWait; /* 本节暂不处理阻塞等待 */
 
-  /* 检查队列是否已满 */
-  if (pxQueue->uxMessagesWaiting < pxQueue->uxLength) {
-    /* 队列未满，直接拷贝数据进去 */
-    prvCopyDataToQueue(pxQueue, pvItemToQueue);
-    return pdPASS;
-  } else {
-    /* 队列满了，直接返回错误 */
-    return errQUEUE_FULL;
+  for (;;) {
+    /* 检查队列是否未满 */
+    if (pxQueue->uxMessagesWaiting < pxQueue->uxLength) {
+      /* 队列未满，直接拷贝数据进去 */
+      prvCopyDataToQueue(pxQueue, pvItemToQueue);
+
+      /* 检查是否有任务正在阻塞等待接收消息，若有则唤醒最高优等待任务 */
+      if (listLIST_IS_EMPTY(&(pxQueue->xTasksWaitingToReceive)) == 0) {
+        if (xTaskRemoveFromEventList(&(pxQueue->xTasksWaitingToReceive)) ==
+            pdPASS) {
+          /* 唤醒的任务优先级高于或等于当前任务，请求切换 */
+          vTaskSwitchContext();
+        }
+      }
+      return pdPASS;
+    } else {
+      /* 队列已满 */
+      if (xTicksToWait == (TickType_t)0U) {
+        return errQUEUE_FULL;
+      } else {
+        /* 将当前任务挂入发送等待链表，并根据超时时间阻塞 */
+        vTaskPlaceOnEventList(&(pxQueue->xTasksWaitingToSend), xTicksToWait);
+        vTaskSwitchContext();
+        xTicksToWait = 0;
+      }
+    }
   }
 }
 
-/* 3. 从队列接收消息 API */
+/* 3. 从队列接收消息 API (支持超时阻塞与唤醒发送任务) */
 BaseType_t xQueueReceive(QueueHandle_t xQueue, void *const pvBuffer,
                          TickType_t xTicksToWait) {
   Queue_t *const pxQueue = (Queue_t *)xQueue;
-  (void)xTicksToWait; /* 本节暂不处理阻塞等待 */
 
-  /* 检查队列是否为空 */
-  if (pxQueue->uxMessagesWaiting > (UBaseType_t)0) {
-    /* 队列有数据，拷贝出来 */
-    prvCopyDataFromQueue(pxQueue, pvBuffer);
-    return pdPASS;
-  } else {
-    /* 队列是空的，读不到数据 */
-    return errQUEUE_EMPTY;
+  for (;;) {
+    /* 检查队列是否非空 */
+    if (pxQueue->uxMessagesWaiting > (UBaseType_t)0) {
+      /* 队列有数据，拷贝出来 */
+      prvCopyDataFromQueue(pxQueue, pvBuffer);
+
+      /* 检查是否有任务正在阻塞等待发送消息，若有则唤醒 */
+      if (listLIST_IS_EMPTY(&(pxQueue->xTasksWaitingToSend)) == 0) {
+        if (xTaskRemoveFromEventList(&(pxQueue->xTasksWaitingToSend)) ==
+            pdPASS) {
+          vTaskSwitchContext();
+        }
+      }
+      return pdPASS;
+    } else {
+      /* 队列为空 */
+      if (xTicksToWait == (TickType_t)0U) {
+        return errQUEUE_EMPTY;
+      } else {
+        /* 将当前任务挂入接收等待链表，并根据超时时间阻塞 */
+        vTaskPlaceOnEventList(&(pxQueue->xTasksWaitingToReceive), xTicksToWait);
+        vTaskSwitchContext();
+        xTicksToWait = 0;
+      }
+    }
   }
 }

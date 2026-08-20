@@ -241,6 +241,40 @@ void test_Queue_Create_Send_Receive_RingBuffer(void) {
   TEST_ASSERT_EQUAL_UINT32((uint32_t)initialFreeHeap, (uint32_t)xPortGetFreeHeapSize());
 }
 
+/* ------------------ Test Suite 8: Queue Blocking & Unblocking ------------------ */
+void test_Queue_Blocking_And_Unblocking(void) {
+  prvInitialiseTaskLists();
+  pxCurrentTCB = NULL;
+
+  /* 创建接收任务 (高优先级 2) 和 发送任务 (低优先级 1) */
+  xTaskCreateStatic(dummyTaskFunc, "RxTask", TEST_STACK_DEPTH, NULL, 2, testStack, &testTCB);
+  xTaskCreateStatic(dummyTaskFunc, "TxTask", TEST_STACK_DEPTH, NULL, 1, testStack2, &testTCB2);
+
+  /* 初始时当前任务为高优先级的 RxTask */
+  TEST_ASSERT_EQUAL_STRING("RxTask", pxCurrentTCB->pcTaskName);
+
+  /* 创建容量为 1 的队列 */
+  QueueHandle_t xQueue = xQueueCreate(1, sizeof(uint32_t));
+  TEST_ASSERT_NOT_NULL(xQueue);
+
+  uint32_t rxVal = 0;
+  /* RxTask 尝试从空队列读数据并阻塞 (超时设为 10 ticks) */
+  (void)xQueueReceive(xQueue, &rxVal, 10);
+
+  /* RxTask 阻塞后，内核应自动让出 CPU 并切换到 TxTask (优先级 1) */
+  TEST_ASSERT_EQUAL_STRING("TxTask", pxCurrentTCB->pcTaskName);
+
+  /* TxTask 向队列发送数据，将唤醒阻塞中的高优先级 RxTask */
+  uint32_t txVal = 888;
+  BaseType_t sendStatus = xQueueSend(xQueue, &txVal, 0);
+  TEST_ASSERT_EQUAL_INT(pdPASS, sendStatus);
+
+  /* 唤醒后，RxTask 优先级更高，CPU 自动抢占切换回 RxTask */
+  TEST_ASSERT_EQUAL_STRING("RxTask", pxCurrentTCB->pcTaskName);
+
+  vPortFree(xQueue);
+}
+
 int main(void) {
   UNITY_BEGIN();
 
@@ -265,6 +299,9 @@ int main(void) {
 
   /* Suite 7: Queue Ring Buffer */
   RUN_TEST(test_Queue_Create_Send_Receive_RingBuffer);
+
+  /* Suite 8: Queue Blocking & Unblocking */
+  RUN_TEST(test_Queue_Blocking_And_Unblocking);
 
   return UNITY_END();
 }
