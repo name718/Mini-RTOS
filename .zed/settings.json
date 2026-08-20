@@ -1,0 +1,12 @@
+{
+  "languages": {
+    "C": {
+      "format_on_save": "on",
+      "formatter": "language_server"
+    },
+    "C++": {
+      "format_on_save": "on",
+      "formatter": "language_server"
+    }
+  }
+}

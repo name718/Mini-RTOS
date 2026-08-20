@@ -1,6 +1,7 @@
 #include "../include/list.h"
 #include "../include/portable.h"
 #include "../include/task.h"
+#include "../include/queue.h"
 #include "unity/unity.h"
 
 extern List_t pxReadyTasksLists[configMAX_PRIORITIES];
@@ -90,8 +91,7 @@ void test_Task_StaticCreation_And_StackFrame(void) {
   TEST_ASSERT_EQUAL_HEX32(0x01000000, sp[15]); /* xPSR Thumb bit */
 }
 
-/* ------------------ Test Suite 3: Task Delay & Tick Increment
- * ------------------ */
+/* ------------------ Test Suite 3: Task Delay & Tick Increment ------------------ */
 void test_Task_Delay_And_TickWakeup(void) {
   prvInitialiseTaskLists();
   pxCurrentTCB = NULL;
@@ -144,8 +144,7 @@ void test_RoundRobin_Scheduling(void) {
   TEST_ASSERT_EQUAL_STRING("TaskA", pxCurrentTCB->pcTaskName);
 }
 
-/* ------------------ Test Suite 5: Heap_4 Memory Management ------------------
- */
+/* ------------------ Test Suite 5: Heap_4 Memory Management ------------------ */
 void test_Heap4_Malloc_Free_And_Coalescing(void) {
   size_t initialFreeSize = xPortGetFreeHeapSize();
   TEST_ASSERT_TRUE(initialFreeSize > 0);
@@ -169,8 +168,7 @@ void test_Heap4_Malloc_Free_And_Coalescing(void) {
                            (uint32_t)xPortGetFreeHeapSize());
 }
 
-/* ------------------ Test Suite 6: Dynamic Task Creation & Deletion
- * ------------------ */
+/* ------------------ Test Suite 6: Dynamic Task Creation & Deletion ------------------ */
 void test_Task_DynamicCreate_And_Delete(void) {
   prvInitialiseTaskLists();
   pxCurrentTCB = NULL;
@@ -196,6 +194,53 @@ void test_Task_DynamicCreate_And_Delete(void) {
                            (uint32_t)xPortGetFreeHeapSize());
 }
 
+/* ------------------ Test Suite 7: Queue RingBuffer Send & Receive ------------------ */
+void test_Queue_Create_Send_Receive_RingBuffer(void) {
+  size_t initialFreeHeap = xPortGetFreeHeapSize();
+
+  /* 1. 创建深度为 3，消息大小为 4 字节的队列 */
+  QueueHandle_t xQueue = xQueueCreate(3, sizeof(uint32_t));
+  TEST_ASSERT_NOT_NULL(xQueue);
+  TEST_ASSERT_TRUE(xPortGetFreeHeapSize() < initialFreeHeap);
+
+  uint32_t rxValue = 0;
+  /* 2. 此时队列为空，接收应该失败 */
+  TEST_ASSERT_EQUAL_INT(errQUEUE_EMPTY, xQueueReceive(xQueue, &rxValue, 0));
+
+  /* 3. 连续发送 3 条消息填满队列 */
+  uint32_t tx1 = 100, tx2 = 200, tx3 = 300, tx4 = 400;
+  TEST_ASSERT_EQUAL_INT(pdPASS, xQueueSend(xQueue, &tx1, 0));
+  TEST_ASSERT_EQUAL_INT(pdPASS, xQueueSend(xQueue, &tx2, 0));
+  TEST_ASSERT_EQUAL_INT(pdPASS, xQueueSend(xQueue, &tx3, 0));
+
+  /* 4. 队列已满，再发送应该失败 */
+  TEST_ASSERT_EQUAL_INT(errQUEUE_FULL, xQueueSend(xQueue, &tx4, 0));
+
+  /* 5. 读取 1 条数据 (期望 100) */
+  TEST_ASSERT_EQUAL_INT(pdPASS, xQueueReceive(xQueue, &rxValue, 0));
+  TEST_ASSERT_EQUAL_UINT32(100, rxValue);
+
+  /* 6. 腾出空间后，写入 400 (测试写指针回绕 Ring Buffer Wrap Around) */
+  TEST_ASSERT_EQUAL_INT(pdPASS, xQueueSend(xQueue, &tx4, 0));
+
+  /* 7. 依次读取剩余 3 条数据 (期望 200, 300, 400，测试读指针回绕) */
+  TEST_ASSERT_EQUAL_INT(pdPASS, xQueueReceive(xQueue, &rxValue, 0));
+  TEST_ASSERT_EQUAL_UINT32(200, rxValue);
+
+  TEST_ASSERT_EQUAL_INT(pdPASS, xQueueReceive(xQueue, &rxValue, 0));
+  TEST_ASSERT_EQUAL_UINT32(300, rxValue);
+
+  TEST_ASSERT_EQUAL_INT(pdPASS, xQueueReceive(xQueue, &rxValue, 0));
+  TEST_ASSERT_EQUAL_UINT32(400, rxValue);
+
+  /* 8. 队列再次为空 */
+  TEST_ASSERT_EQUAL_INT(errQUEUE_EMPTY, xQueueReceive(xQueue, &rxValue, 0));
+
+  /* 9. 释放队列内存 */
+  vPortFree(xQueue);
+  TEST_ASSERT_EQUAL_UINT32((uint32_t)initialFreeHeap, (uint32_t)xPortGetFreeHeapSize());
+}
+
 int main(void) {
   UNITY_BEGIN();
 
@@ -217,6 +262,9 @@ int main(void) {
 
   /* Suite 6: Dynamic Task Create & Delete */
   RUN_TEST(test_Task_DynamicCreate_And_Delete);
+
+  /* Suite 7: Queue Ring Buffer */
+  RUN_TEST(test_Queue_Create_Send_Receive_RingBuffer);
 
   return UNITY_END();
 }
