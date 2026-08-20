@@ -15,6 +15,8 @@ typedef struct QueueDefinition {
   UBaseType_t uxLength;                   /* 队列的最大容量 (最大消息数) */
   UBaseType_t uxItemSize;                 /* 单个消息的字节大小 */
 
+  TCB_t *pxMutexHolder; /* 持有当前互斥量的任务 TCB (仅互斥量使用) */
+
 } xQUEUE;
 
 typedef xQUEUE Queue_t;
@@ -40,8 +42,14 @@ QueueHandle_t xQueueCreate(const UBaseType_t uxQueueLength,
     pxNewQueue->uxItemSize = uxItemSize;
     pxNewQueue->uxMessagesWaiting = (UBaseType_t)0U;
     pxNewQueue->pcWriteTo = pxNewQueue->pcHead;
-    pxNewQueue->pcReadFrom =
-        pxNewQueue->pcHead + ((uxQueueLength - 1) * uxItemSize);
+    if (uxItemSize > 0) {
+      pxNewQueue->pcReadFrom =
+          pxNewQueue->pcHead + ((uxQueueLength - 1) * uxItemSize);
+    } else {
+      pxNewQueue->pcReadFrom = pxNewQueue->pcHead;
+    }
+
+    pxNewQueue->pxMutexHolder = NULL;
 
     /* 5. 初始化两条等待链表 */
     vListInitialise(&(pxNewQueue->xTasksWaitingToSend));
@@ -51,41 +59,68 @@ QueueHandle_t xQueueCreate(const UBaseType_t uxQueueLength,
   return (QueueHandle_t)pxNewQueue;
 }
 
+/* 创建计数信号量队列 API */
+QueueHandle_t xQueueCreateCounting(const UBaseType_t uxMaxCount,
+                                   const UBaseType_t uxInitialCount) {
+  Queue_t *pxNewQueue = (Queue_t *)xQueueCreate(uxMaxCount, 0);
+  if (pxNewQueue != NULL) {
+    pxNewQueue->uxMessagesWaiting = uxInitialCount;
+  }
+  return (QueueHandle_t)pxNewQueue;
+}
+
+/* 创建互斥量队列 API */
+QueueHandle_t xQueueCreateMutex(void) {
+  /* 互斥量本质是长度为 1，元素大小为 0 的队列，初始拥有 1 把锁可用 */
+  Queue_t *pxNewQueue = (Queue_t *)xQueueCreate(1, 0);
+  if (pxNewQueue != NULL) {
+    pxNewQueue->uxMessagesWaiting = (UBaseType_t)1U;
+    pxNewQueue->pxMutexHolder = NULL;
+  }
+  return (QueueHandle_t)pxNewQueue;
+}
+
 /* 内部辅助函数：将数据拷贝入环形缓冲区 */
 static void prvCopyDataToQueue(Queue_t *const pxQueue,
                                const void *pvItemToQueue) {
-  /* 1. 将数据拷贝到写指针 pcWriteTo 的位置 */
-  memcpy((void *)pxQueue->pcWriteTo, pvItemToQueue,
-         (size_t)pxQueue->uxItemSize);
+  if (pxQueue->uxItemSize > 0) {
+    /* 1. 将数据拷贝到写指针 pcWriteTo 的位置 */
+    memcpy((void *)pxQueue->pcWriteTo, pvItemToQueue,
+           (size_t)pxQueue->uxItemSize);
 
-  /* 2. 移动写指针。如果越界，则回绕到缓冲区头部 (Ring Buffer 回绕) */
-  pxQueue->pcWriteTo += pxQueue->uxItemSize;
-  if (pxQueue->pcWriteTo >=
-      pxQueue->pcHead + (pxQueue->uxLength * pxQueue->uxItemSize)) {
-    pxQueue->pcWriteTo = pxQueue->pcHead;
+    /* 2. 移动写指针。如果越界，则回绕到缓冲区头部 (Ring Buffer 回绕) */
+    pxQueue->pcWriteTo += pxQueue->uxItemSize;
+    if (pxQueue->pcWriteTo >=
+        pxQueue->pcHead + (pxQueue->uxLength * pxQueue->uxItemSize)) {
+      pxQueue->pcWriteTo = pxQueue->pcHead;
+    }
   }
 
-  /* 3. 队列里的消息总数 + 1 */
+  /* 3. 队列里的消息/信号量总数 + 1 */
   pxQueue->uxMessagesWaiting++;
 }
 
 /* 内部辅助函数：从环形缓冲区拷贝出数据 */
 static void prvCopyDataFromQueue(Queue_t *const pxQueue, void *const pvBuffer) {
-  /* 1. 移动读指针。读取位置总是由 pcReadFrom 推进得到，同样需要处理回绕 */
-  pxQueue->pcReadFrom += pxQueue->uxItemSize;
-  if (pxQueue->pcReadFrom >=
-      pxQueue->pcHead + (pxQueue->uxLength * pxQueue->uxItemSize)) {
-    pxQueue->pcReadFrom = pxQueue->pcHead;
+  if (pxQueue->uxItemSize > 0) {
+    /* 1. 移动读指针。读取位置总是由 pcReadFrom 推进得到，同样需要处理回绕 */
+    pxQueue->pcReadFrom += pxQueue->uxItemSize;
+    if (pxQueue->pcReadFrom >=
+        pxQueue->pcHead + (pxQueue->uxLength * pxQueue->uxItemSize)) {
+      pxQueue->pcReadFrom = pxQueue->pcHead;
+    }
+
+    /* 2. 将数据拷贝到用户的 buffer 中 */
+    if (pvBuffer != NULL) {
+      memcpy(pvBuffer, (void *)pxQueue->pcReadFrom, (size_t)pxQueue->uxItemSize);
+    }
   }
 
-  /* 2. 将数据拷贝到用户的 buffer 中 */
-  memcpy(pvBuffer, (void *)pxQueue->pcReadFrom, (size_t)pxQueue->uxItemSize);
-
-  /* 3. 队列里的消息总数 - 1 */
+  /* 3. 队列里的消息/信号量总数 - 1 */
   pxQueue->uxMessagesWaiting--;
 }
 
-/* 2. 发送消息到队列 API (支持超时阻塞与唤醒接收任务) */
+/* 2. 发送消息 / 释放信号量/互斥量 API */
 BaseType_t xQueueSend(QueueHandle_t xQueue, const void *pvItemToQueue,
                       TickType_t xTicksToWait) {
   Queue_t *const pxQueue = (Queue_t *)xQueue;
@@ -95,6 +130,12 @@ BaseType_t xQueueSend(QueueHandle_t xQueue, const void *pvItemToQueue,
     if (pxQueue->uxMessagesWaiting < pxQueue->uxLength) {
       /* 队列未满，直接拷贝数据进去 */
       prvCopyDataToQueue(pxQueue, pvItemToQueue);
+
+      /* 如果释放的是互斥量，恢复持有者的基准优先级 */
+      if (pxQueue->pxMutexHolder != NULL) {
+        (void)xTaskPriorityDisinherit(pxQueue->pxMutexHolder);
+        pxQueue->pxMutexHolder = NULL;
+      }
 
       /* 检查是否有任务正在阻塞等待接收消息，若有则唤醒最高优等待任务 */
       if (listLIST_IS_EMPTY(&(pxQueue->xTasksWaitingToReceive)) == 0) {
@@ -119,7 +160,7 @@ BaseType_t xQueueSend(QueueHandle_t xQueue, const void *pvItemToQueue,
   }
 }
 
-/* 3. 从队列接收消息 API (支持超时阻塞与唤醒发送任务) */
+/* 3. 接收消息 / 获取信号量/互斥量 API */
 BaseType_t xQueueReceive(QueueHandle_t xQueue, void *const pvBuffer,
                          TickType_t xTicksToWait) {
   Queue_t *const pxQueue = (Queue_t *)xQueue;
@@ -130,6 +171,12 @@ BaseType_t xQueueReceive(QueueHandle_t xQueue, void *const pvBuffer,
       /* 队列有数据，拷贝出来 */
       prvCopyDataFromQueue(pxQueue, pvBuffer);
 
+      /* 若此队列用作互斥量（uxLength == 1 且 uxItemSize == 0），记录持有者 */
+      if ((pxQueue->uxLength == (UBaseType_t)1U) &&
+          (pxQueue->uxItemSize == (UBaseType_t)0U)) {
+        pxQueue->pxMutexHolder = pxCurrentTCB;
+      }
+
       /* 检查是否有任务正在阻塞等待发送消息，若有则唤醒 */
       if (listLIST_IS_EMPTY(&(pxQueue->xTasksWaitingToSend)) == 0) {
         if (xTaskRemoveFromEventList(&(pxQueue->xTasksWaitingToSend)) ==
@@ -139,10 +186,15 @@ BaseType_t xQueueReceive(QueueHandle_t xQueue, void *const pvBuffer,
       }
       return pdPASS;
     } else {
-      /* 队列为空 */
+      /* 队列为空 (锁已被他人获取) */
       if (xTicksToWait == (TickType_t)0U) {
         return errQUEUE_EMPTY;
       } else {
+        /* 如果是互斥量且当前被低优先级任务持有，触发优先级继承提升持有者 */
+        if (pxQueue->pxMutexHolder != NULL) {
+          vTaskPriorityInherit(pxQueue->pxMutexHolder);
+        }
+
         /* 将当前任务挂入接收等待链表，并根据超时时间阻塞 */
         vTaskPlaceOnEventList(&(pxQueue->xTasksWaitingToReceive), xTicksToWait);
         vTaskSwitchContext();

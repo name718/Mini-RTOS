@@ -2,6 +2,7 @@
 #include "../include/portable.h"
 #include "../include/task.h"
 #include "../include/queue.h"
+#include "../include/semphr.h"
 #include "unity/unity.h"
 
 extern List_t pxReadyTasksLists[configMAX_PRIORITIES];
@@ -275,6 +276,87 @@ void test_Queue_Blocking_And_Unblocking(void) {
   vPortFree(xQueue);
 }
 
+/* ------------------ Test Suite 9: Binary & Counting Semaphores ------------------ */
+void test_Binary_And_Counting_Semaphore(void) {
+  /* 1. 二值信号量测试 */
+  SemaphoreHandle_t xBinSem = xSemaphoreCreateBinary();
+  TEST_ASSERT_NOT_NULL(xBinSem);
+
+  /* 初始时无信号，Take 失败 */
+  TEST_ASSERT_EQUAL_INT(pdFAIL, xSemaphoreTake(xBinSem, 0));
+
+  /* 释放信号量 (Give) */
+  TEST_ASSERT_EQUAL_INT(pdPASS, xSemaphoreGive(xBinSem));
+
+  /* 成功获取信号量 (Take) */
+  TEST_ASSERT_EQUAL_INT(pdPASS, xSemaphoreTake(xBinSem, 0));
+
+  /* 再次 Take 失败 */
+  TEST_ASSERT_EQUAL_INT(pdFAIL, xSemaphoreTake(xBinSem, 0));
+  vPortFree(xBinSem);
+
+  /* 2. 计数信号量测试 (最大 3，初始 2) */
+  SemaphoreHandle_t xCountSem = xSemaphoreCreateCounting(3, 2);
+  TEST_ASSERT_NOT_NULL(xCountSem);
+
+  /* 消耗前 2 个信号量 */
+  TEST_ASSERT_EQUAL_INT(pdPASS, xSemaphoreTake(xCountSem, 0));
+  TEST_ASSERT_EQUAL_INT(pdPASS, xSemaphoreTake(xCountSem, 0));
+
+  /* 第 3 次 Take 失败 (计数已减为 0) */
+  TEST_ASSERT_EQUAL_INT(pdFAIL, xSemaphoreTake(xCountSem, 0));
+
+  /* 连续 Give 3 次达到上限 */
+  TEST_ASSERT_EQUAL_INT(pdPASS, xSemaphoreGive(xCountSem));
+  TEST_ASSERT_EQUAL_INT(pdPASS, xSemaphoreGive(xCountSem));
+  TEST_ASSERT_EQUAL_INT(pdPASS, xSemaphoreGive(xCountSem));
+
+  /* 第 4 次 Give 失败 (已达到最大计数 3) */
+  TEST_ASSERT_EQUAL_INT(pdFAIL, xSemaphoreGive(xCountSem));
+
+  vPortFree(xCountSem);
+}
+
+/* ------------------ Test Suite 10: Mutex & Priority Inheritance ------------------ */
+void test_Mutex_And_Priority_Inheritance(void) {
+  prvInitialiseTaskLists();
+  pxCurrentTCB = NULL;
+
+  /* 创建低优先级任务 Task_L (优先级 1) 与 高优先级任务 Task_H (优先级 3) */
+  TaskHandle_t hTaskL = xTaskCreateStatic(dummyTaskFunc, "Task_L", TEST_STACK_DEPTH, NULL, 1, testStack, &testTCB);
+  TaskHandle_t hTaskH = xTaskCreateStatic(dummyTaskFunc, "Task_H", TEST_STACK_DEPTH, NULL, 3, testStack2, &testTCB2);
+
+  TCB_t *tcbL = (TCB_t *)hTaskL;
+  TCB_t *tcbH = (TCB_t *)hTaskH;
+
+  /* 创建互斥量 */
+  SemaphoreHandle_t xMutex = xSemaphoreCreateMutex();
+  TEST_ASSERT_NOT_NULL(xMutex);
+
+  /* 1. 模拟 Task_L 先运行并获取了互斥锁 */
+  pxCurrentTCB = tcbL;
+  TEST_ASSERT_EQUAL_INT(pdPASS, xSemaphoreTake(xMutex, 0));
+  TEST_ASSERT_EQUAL_UINT32(1, tcbL->uxPriority);     /* 此时 Task_L 保持自身优先级 1 */
+
+  /* 2. 模拟高优先级 Task_H 抢占运行并尝试获取同一个互斥锁 (带超时阻塞) */
+  pxCurrentTCB = tcbH;
+  (void)xSemaphoreTake(xMutex, 10);
+
+  /* 3. 核心断言：由于 Task_H 阻塞在 Task_L 持有的锁上，Task_L 优先级被临时继承提升到 3！ */
+  TEST_ASSERT_EQUAL_UINT32(3, tcbL->uxPriority);
+  TEST_ASSERT_EQUAL_UINT32(1, tcbL->uxBasePriority); /* 基准优先级依然是 1 */
+  TEST_ASSERT_EQUAL_PTR(tcbL, pxCurrentTCB);         /* Task_H 阻塞后，CPU 切换回被提升的 Task_L */
+
+  /* 4. Task_L 执行完毕释放互斥锁 */
+  TEST_ASSERT_EQUAL_INT(pdPASS, xSemaphoreGive(xMutex));
+
+  /* 5. 核心断言：锁释放后，Task_L 优先级自动恢复回基准 1，Task_H 被唤醒并抢占 CPU！ */
+  TEST_ASSERT_EQUAL_UINT32(1, tcbL->uxPriority);
+  TEST_ASSERT_EQUAL_PTR(tcbH, pxCurrentTCB);
+
+  vPortFree(xMutex);
+}
+
 int main(void) {
   UNITY_BEGIN();
 
@@ -302,6 +384,12 @@ int main(void) {
 
   /* Suite 8: Queue Blocking & Unblocking */
   RUN_TEST(test_Queue_Blocking_And_Unblocking);
+
+  /* Suite 9: Binary & Counting Semaphores */
+  RUN_TEST(test_Binary_And_Counting_Semaphore);
+
+  /* Suite 10: Mutex & Priority Inheritance */
+  RUN_TEST(test_Mutex_And_Priority_Inheritance);
 
   return UNITY_END();
 }

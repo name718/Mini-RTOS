@@ -58,6 +58,7 @@ TaskHandle_t xTaskCreateStatic(TaskFunction_t pxTaskCode,
     }
 
     pxNewTCB->uxPriority = uxPriority;
+    pxNewTCB->uxBasePriority = uxPriority;
 
     /* 2. 计算初始栈顶物理地址（满递减栈：栈顶为数组最后一个元素） */
     pxTopOfStack = &(puxStackBuffer[ulStackDepth - (uint32_t)1]);
@@ -84,12 +85,10 @@ TaskHandle_t xTaskCreateStatic(TaskFunction_t pxTaskCode,
     /* 初始化事件链表节点 (其排序值设为反向优先级，确保高优先级任务排在最前) */
     vListInitialiseItem(&(pxNewTCB->xEventListItem));
     listSET_LIST_ITEM_OWNER(&(pxNewTCB->xEventListItem), pxNewTCB);
-    listSET_LIST_ITEM_VALUE(
-        &(pxNewTCB->xEventListItem),
-        (TickType_t)(configMAX_PRIORITIES - (UBaseType_t)1U - uxPriority));
+    listSET_LIST_ITEM_VALUE(&(pxNewTCB->xEventListItem),
+                            (TickType_t)(configMAX_PRIORITIES - (UBaseType_t)1U - uxPriority));
 
-    /* 5. 调用移植层硬件接口伪造寄存器，并将返回的最新栈顶赋值给 TCB 的
-     * pxTopOfStack */
+    /* 5. 调用移植层硬件接口伪造寄存器，并将返回的最新栈顶赋值给 TCB 的 pxTopOfStack */
     pxNewTCB->pxTopOfStack =
         pxPortInitialiseStack(pxTopOfStack, pxTaskCode, pvParameters);
 
@@ -256,16 +255,14 @@ BaseType_t xTaskIncrementTick(void) {
 void vTaskSwitchContext(void) {
   UBaseType_t uxTopPriority =
       (UBaseType_t)configMAX_PRIORITIES - (UBaseType_t)1U;
-  /* 1. 从最高优先级向下查找第一个非空的就绪链表 (加边界防保护 uxTopPriority >
-   * 0) */
+  /* 1. 从最高优先级向下查找第一个非空的就绪链表 (加边界防保护 uxTopPriority > 0) */
   while ((uxTopPriority > 0) &&
          (listLIST_IS_EMPTY(&(pxReadyTasksLists[uxTopPriority])) != 0)) {
     uxTopPriority--;
   }
 
   if (listLIST_IS_EMPTY(&(pxReadyTasksLists[uxTopPriority])) == 0) {
-    /* 2. 利用 listGET_OWNER_OF_NEXT_ENTRY 宏挪动游标
-     * pxIndex，获取下一个就绪任务 */
+    /* 2. 利用 listGET_OWNER_OF_NEXT_ENTRY 宏挪动游标 pxIndex，获取下一个就绪任务 */
     listGET_OWNER_OF_NEXT_ENTRY(pxCurrentTCB,
                                 &(pxReadyTasksLists[uxTopPriority]));
   } else {
@@ -351,6 +348,52 @@ BaseType_t xTaskRemoveFromEventList(const List_t *const pxEventList) {
     /* 5. 若解封的任务优先级高于或等于当前运行任务，需要请求调度切换 */
     if ((pxCurrentTCB == NULL) ||
         (pxUnblockedTCB->uxPriority >= pxCurrentTCB->uxPriority)) {
+      xReturn = pdPASS;
+    }
+  }
+
+  return xReturn;
+}
+
+/* 16. 优先级继承：临时提升持有互斥锁任务的优先级 */
+void vTaskPriorityInherit(TCB_t *const pxMutexHolder) {
+  if (pxMutexHolder != NULL) {
+    /* 只有当持有者当前优先级低于申请者的优先级时，才进行继承提升 */
+    if (pxMutexHolder->uxPriority < pxCurrentTCB->uxPriority) {
+      /* 如果持有者处于就绪链表中，需要先从旧优先级链表移出 */
+      if (pxMutexHolder->xStateListItem.pxContainer != NULL) {
+        (void)uxListRemove(&(pxMutexHolder->xStateListItem));
+      }
+
+      /* 临时提升优先级到申请者的优先级 */
+      pxMutexHolder->uxPriority = pxCurrentTCB->uxPriority;
+
+      /* 挂载到新的高优先级就绪链表中 */
+      vListInsertEnd(&(pxReadyTasksLists[pxMutexHolder->uxPriority]),
+                     &(pxMutexHolder->xStateListItem));
+    }
+  }
+}
+
+/* 17. 优先级恢复：互斥锁释放后恢复持有者的基准优先级 */
+BaseType_t xTaskPriorityDisinherit(TCB_t *const pxMutexHolder) {
+  BaseType_t xReturn = pdFAIL;
+
+  if (pxMutexHolder != NULL) {
+    /* 检查是否发生过优先级继承提升 */
+    if (pxMutexHolder->uxPriority != pxMutexHolder->uxBasePriority) {
+      /* 从高优先级就绪链表移出 */
+      if (pxMutexHolder->xStateListItem.pxContainer != NULL) {
+        (void)uxListRemove(&(pxMutexHolder->xStateListItem));
+      }
+
+      /* 恢复为原来的基准优先级 */
+      pxMutexHolder->uxPriority = pxMutexHolder->uxBasePriority;
+
+      /* 挂载回原优先级就绪链表中 */
+      vListInsertEnd(&(pxReadyTasksLists[pxMutexHolder->uxPriority]),
+                     &(pxMutexHolder->xStateListItem));
+
       xReturn = pdPASS;
     }
   }

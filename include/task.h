@@ -24,8 +24,11 @@ typedef struct tskTCB {
   /* 事件链表节点（用于挂在队列或信号量的等待链表上）*/
   ListItem_t xEventListItem;
 
-  /* 任务优先级 (0 为最低优先级) */
+  /* 任务当前优先级 (可能因优先级继承而临时提升) */
   UBaseType_t uxPriority;
+
+  /* 任务基准初始优先级 (用于互斥量释放后恢复) */
+  UBaseType_t uxBasePriority;
 
   /* 指向任务栈内存块的起始地址 */
   StackType_t *pxStack;
@@ -78,5 +81,11 @@ void vTaskPlaceOnEventList(List_t *const pxEventList,
 
 /* 15. 从事件阻塞链表唤醒最高优先级的任务，返回是否需要触发上下文切换 */
 BaseType_t xTaskRemoveFromEventList(const List_t *const pxEventList);
+
+/* 16. 优先级继承：临时提升持有互斥锁任务的优先级 */
+void vTaskPriorityInherit(TCB_t *const pxMutexHolder);
+
+/* 17. 优先级恢复：互斥锁释放后恢复持有者的基准优先级 */
+BaseType_t xTaskPriorityDisinherit(TCB_t *const pxMutexHolder);
 
 #endif /* TASK_H */
