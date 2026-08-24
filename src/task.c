@@ -60,6 +60,10 @@ TaskHandle_t xTaskCreateStatic(TaskFunction_t pxTaskCode,
     pxNewTCB->uxPriority = uxPriority;
     pxNewTCB->uxBasePriority = uxPriority;
 
+    /* 初始化任务通知状态 */
+    pxNewTCB->ulNotifiedValue = 0U;
+    pxNewTCB->ucNotifyState = taskNOT_WAITING_NOTIFICATION;
+
     /* 2. 计算初始栈顶物理地址（满递减栈：栈顶为数组最后一个元素） */
     pxTopOfStack = &(puxStackBuffer[ulStackDepth - (uint32_t)1]);
 
@@ -312,8 +316,10 @@ void vTaskDelete(TaskHandle_t xTaskToDelete) {
 /* 14. 将当前任务挂载到事件阻塞链表（如队列的等待链表） */
 void vTaskPlaceOnEventList(List_t *const pxEventList,
                            const TickType_t xTicksToWait) {
-  /* 1. 插入到事件等待链表中 (按优先级由高到低有序排列) */
-  vListInsert(pxEventList, &(pxCurrentTCB->xEventListItem));
+  /* 1. 若提供了事件链表，插入到事件等待链表中 (按优先级由高到低有序排列) */
+  if (pxEventList != NULL) {
+    vListInsert(pxEventList, &(pxCurrentTCB->xEventListItem));
+  }
 
   /* 2. 将当前任务移出就绪链表，若指定了超时时间则加入延时链表 */
   if (xTicksToWait > (TickType_t)0U) {
@@ -397,6 +403,148 @@ BaseType_t xTaskPriorityDisinherit(TCB_t *const pxMutexHolder) {
       xReturn = pdPASS;
     }
   }
+
+  return xReturn;
+}
+
+/* 18. 临界区管理实现 */
+void vTaskEnterCritical(void) {
+  portENTER_CRITICAL();
+}
+
+void vTaskExitCritical(void) {
+  portEXIT_CRITICAL();
+}
+
+/* 19. 任务通知实现 */
+BaseType_t xTaskGenericNotify(TaskHandle_t xTaskToNotify, uint32_t ulValue,
+                              eNotifyAction eAction,
+                              uint32_t *pulPreviousNotificationValue) {
+  TCB_t *pxTCB = (TCB_t *)xTaskToNotify;
+  BaseType_t xReturn = pdPASS;
+  uint8_t ucOriginalNotifyState;
+
+  if (pxTCB == NULL) {
+    pxTCB = pxCurrentTCB;
+  }
+
+  taskENTER_CRITICAL();
+  {
+    if (pulPreviousNotificationValue != NULL) {
+      *pulPreviousNotificationValue = pxTCB->ulNotifiedValue;
+    }
+
+    ucOriginalNotifyState = pxTCB->ucNotifyState;
+    pxTCB->ucNotifyState = taskNOTIFICATION_RECEIVED;
+
+    switch (eAction) {
+      case eSetBits:
+        pxTCB->ulNotifiedValue |= ulValue;
+        break;
+      case eIncrement:
+        pxTCB->ulNotifiedValue++;
+        break;
+      case eSetValueWithOverwrite:
+        pxTCB->ulNotifiedValue = ulValue;
+        break;
+      case eSetValueWithoutOverwrite:
+        if (ucOriginalNotifyState != taskNOTIFICATION_RECEIVED) {
+          pxTCB->ulNotifiedValue = ulValue;
+        } else {
+          xReturn = pdFAIL;
+        }
+        break;
+      case eNoAction:
+      default:
+        break;
+    }
+
+    /* 如果目标任务此前正因等待通知而阻塞，将其从延时链表唤醒并挂入就绪链表 */
+    if (ucOriginalNotifyState == taskWAITING_NOTIFICATION) {
+      if (pxTCB->xStateListItem.pxContainer != NULL) {
+        (void)uxListRemove(&(pxTCB->xStateListItem));
+      }
+      vListInsertEnd(&(pxReadyTasksLists[pxTCB->uxPriority]),
+                     &(pxTCB->xStateListItem));
+
+      if (pxTCB->uxPriority >= pxCurrentTCB->uxPriority) {
+        vTaskSwitchContext();
+      }
+    }
+  }
+  taskEXIT_CRITICAL();
+
+  return xReturn;
+}
+
+uint32_t ulTaskNotifyTake(BaseType_t xClearCountOnExit,
+                          TickType_t xTicksToWait) {
+  uint32_t ulReturn;
+
+  taskENTER_CRITICAL();
+  {
+    /* 若当前没有待领取的通知值，进入阻塞等待 */
+    if (pxCurrentTCB->ulNotifiedValue == 0U) {
+      pxCurrentTCB->ucNotifyState = taskWAITING_NOTIFICATION;
+      if (xTicksToWait > (TickType_t)0U) {
+        vTaskPlaceOnEventList(NULL, xTicksToWait);
+      }
+      vTaskSwitchContext();
+    }
+  }
+  taskEXIT_CRITICAL();
+
+  taskENTER_CRITICAL();
+  {
+    ulReturn = pxCurrentTCB->ulNotifiedValue;
+    if (ulReturn != 0U) {
+      if (xClearCountOnExit != pdFALSE) {
+        pxCurrentTCB->ulNotifiedValue = 0U;
+      } else {
+        pxCurrentTCB->ulNotifiedValue--;
+      }
+    }
+    pxCurrentTCB->ucNotifyState = taskNOT_WAITING_NOTIFICATION;
+  }
+  taskEXIT_CRITICAL();
+
+  return ulReturn;
+}
+
+BaseType_t xTaskNotifyWait(uint32_t ulBitsToClearOnEntry,
+                           uint32_t ulBitsToClearOnExit,
+                           uint32_t *pulNotificationValue,
+                           TickType_t xTicksToWait) {
+  BaseType_t xReturn = pdFAIL;
+
+  taskENTER_CRITICAL();
+  {
+    /* 若尚未收到通知，清空 entry 指定的标志位并进入等待 */
+    if (pxCurrentTCB->ucNotifyState != taskNOTIFICATION_RECEIVED) {
+      pxCurrentTCB->ulNotifiedValue &= ~ulBitsToClearOnEntry;
+      pxCurrentTCB->ucNotifyState = taskWAITING_NOTIFICATION;
+      if (xTicksToWait > (TickType_t)0U) {
+        vTaskPlaceOnEventList(NULL, xTicksToWait);
+      }
+      vTaskSwitchContext();
+    }
+  }
+  taskEXIT_CRITICAL();
+
+  taskENTER_CRITICAL();
+  {
+    if (pulNotificationValue != NULL) {
+      *pulNotificationValue = pxCurrentTCB->ulNotifiedValue;
+    }
+
+    if (pxCurrentTCB->ucNotifyState == taskNOTIFICATION_RECEIVED) {
+      pxCurrentTCB->ulNotifiedValue &= ~ulBitsToClearOnExit;
+      xReturn = pdPASS;
+    }
+
+    pxCurrentTCB->ucNotifyState = taskNOT_WAITING_NOTIFICATION;
+  }
+  taskEXIT_CRITICAL();
 
   return xReturn;
 }

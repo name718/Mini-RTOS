@@ -5,9 +5,25 @@
 #include "./list.h"
 #include <stdint.h>
 
-#define pdPASS ((BaseType_t)1)
-#define pdFAIL ((BaseType_t)0)
+#define pdPASS  ((BaseType_t)1)
+#define pdFAIL  ((BaseType_t)0)
+#define pdTRUE  ((BaseType_t)1)
+#define pdFALSE ((BaseType_t)0)
 #define errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY ((BaseType_t) - 1)
+
+/* 任务通知动作枚举 (Notify Actions) */
+typedef enum {
+  eNoAction = 0,             /* 不改变通知值，仅标记已收到通知 */
+  eSetBits,                  /* 按位或更新通知值 (相当于轻量级事件标志组) */
+  eIncrement,                /* 通知值自增 (相当于轻量级计数信号量) */
+  eSetValueWithOverwrite,    /* 强制覆盖通知值 (相当于单值邮箱) */
+  eSetValueWithoutOverwrite  /* 不覆盖写入，若已有未读通知则返回失败 */
+} eNotifyAction;
+
+/* 任务通知状态 */
+#define taskNOT_WAITING_NOTIFICATION ((uint8_t)0)
+#define taskWAITING_NOTIFICATION     ((uint8_t)1)
+#define taskNOTIFICATION_RECEIVED    ((uint8_t)2)
 
 /* 1. 架构相关的栈数据类型 (32位 ARM Cortex-M 架构，栈为 32 位/4字节对齐) */
 typedef uint32_t StackType_t;
@@ -35,6 +51,10 @@ typedef struct tskTCB {
 
   /* 任务名称字符串 (方便调试) */
   char pcTaskName[16];
+
+  /* 任务通知内部变量 (Task Notifications: 零堆内存开销轻量级通信) */
+  volatile uint32_t ulNotifiedValue;
+  volatile uint8_t ucNotifyState;
 } TCB_t;
 
 /* 4. 声明全局变量：指向当前正在运行的任务 TCB */
@@ -87,5 +107,30 @@ void vTaskPriorityInherit(TCB_t *const pxMutexHolder);
 
 /* 17. 优先级恢复：互斥锁释放后恢复持有者的基准优先级 */
 BaseType_t xTaskPriorityDisinherit(TCB_t *const pxMutexHolder);
+
+/* 18. 临界区管理 API */
+void vTaskEnterCritical(void);
+void vTaskExitCritical(void);
+#define taskENTER_CRITICAL() vTaskEnterCritical()
+#define taskEXIT_CRITICAL()  vTaskExitCritical()
+
+/* 19. 任务通知 API */
+BaseType_t xTaskGenericNotify(TaskHandle_t xTaskToNotify, uint32_t ulValue,
+                              eNotifyAction eAction,
+                              uint32_t *pulPreviousNotificationValue);
+
+#define xTaskNotify(xTaskToNotify, ulValue, eAction)                           \
+  xTaskGenericNotify((xTaskToNotify), (ulValue), (eAction), NULL)
+
+#define xTaskNotifyGive(xTaskToNotify)                                         \
+  xTaskGenericNotify((xTaskToNotify), (0), eIncrement, NULL)
+
+uint32_t ulTaskNotifyTake(BaseType_t xClearCountOnExit,
+                          TickType_t xTicksToWait);
+
+BaseType_t xTaskNotifyWait(uint32_t ulBitsToClearOnEntry,
+                           uint32_t ulBitsToClearOnExit,
+                           uint32_t *pulNotificationValue,
+                           TickType_t xTicksToWait);
 
 #endif /* TASK_H */

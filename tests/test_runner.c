@@ -1,5 +1,6 @@
 #include "../include/list.h"
 #include "../include/portable.h"
+#include "../include/port.h"
 #include "../include/task.h"
 #include "../include/queue.h"
 #include "../include/semphr.h"
@@ -357,6 +358,85 @@ void test_Mutex_And_Priority_Inheritance(void) {
   vPortFree(xMutex);
 }
 
+/* ------------------ Test Suite 11: Critical Section Management ------------------ */
+void test_Critical_Sections(void) {
+  xPortStartScheduler();
+  TEST_ASSERT_EQUAL_UINT32(0, uxPortGetCriticalNesting());
+
+  /* 进入第 1 层临界区 */
+  taskENTER_CRITICAL();
+  TEST_ASSERT_EQUAL_UINT32(1, uxPortGetCriticalNesting());
+
+  /* 嵌套进入第 2 层临界区 */
+  taskENTER_CRITICAL();
+  TEST_ASSERT_EQUAL_UINT32(2, uxPortGetCriticalNesting());
+
+  /* 退出第 2 层 */
+  taskEXIT_CRITICAL();
+  TEST_ASSERT_EQUAL_UINT32(1, uxPortGetCriticalNesting());
+
+  /* 退出第 1 层 */
+  taskEXIT_CRITICAL();
+  TEST_ASSERT_EQUAL_UINT32(0, uxPortGetCriticalNesting());
+}
+
+/* ------------------ Test Suite 12: Lightweight Task Notifications (NotifyTake) ------------------ */
+void test_Task_Notifications_NotifyTake(void) {
+  prvInitialiseTaskLists();
+  pxCurrentTCB = NULL;
+
+  TaskHandle_t hWorker = xTaskCreateStatic(dummyTaskFunc, "Worker", TEST_STACK_DEPTH, NULL, 2, testStack, &testTCB);
+  TaskHandle_t hManager = xTaskCreateStatic(dummyTaskFunc, "Manager", TEST_STACK_DEPTH, NULL, 1, testStack2, &testTCB2);
+
+  TCB_t *tcbWorker = (TCB_t *)hWorker;
+  TCB_t *tcbManager = (TCB_t *)hManager;
+
+  pxCurrentTCB = tcbWorker;
+  /* Worker 初始调用 NotifyTake 尝试获取通知 (非阻塞) -> 期望 0 */
+  TEST_ASSERT_EQUAL_UINT32(0, ulTaskNotifyTake(pdTRUE, 0));
+
+  /* Manager 向 Worker 发送 2 次轻量级通知 (NotifyGive 自增) */
+  pxCurrentTCB = tcbManager;
+  TEST_ASSERT_EQUAL_INT(pdPASS, xTaskNotifyGive(hWorker));
+  TEST_ASSERT_EQUAL_INT(pdPASS, xTaskNotifyGive(hWorker));
+
+  /* 验证 Worker 内部的通知计数值已自增到 2 */
+  TEST_ASSERT_EQUAL_UINT32(2, tcbWorker->ulNotifiedValue);
+
+  /* Worker 运行并调用 NotifyTake(pdFALSE, 0) 单次递减消费 */
+  pxCurrentTCB = tcbWorker;
+  TEST_ASSERT_EQUAL_UINT32(2, ulTaskNotifyTake(pdFALSE, 0));
+  TEST_ASSERT_EQUAL_UINT32(1, tcbWorker->ulNotifiedValue);
+
+  /* Worker 再次调用 NotifyTake(pdTRUE, 0) 一次性清空消费 */
+  TEST_ASSERT_EQUAL_UINT32(1, ulTaskNotifyTake(pdTRUE, 0));
+  TEST_ASSERT_EQUAL_UINT32(0, tcbWorker->ulNotifiedValue);
+}
+
+/* ------------------ Test Suite 13: Task Notifications (Event Bits & NotifyWait) ------------------ */
+void test_Task_Notifications_SetBits_And_NotifyWait(void) {
+  prvInitialiseTaskLists();
+  pxCurrentTCB = NULL;
+
+  TaskHandle_t hTask = xTaskCreateStatic(dummyTaskFunc, "EventTask", TEST_STACK_DEPTH, NULL, 2, testStack, &testTCB);
+  pxCurrentTCB = (TCB_t *)hTask;
+
+  /* 1. 向任务按位发送事件标志：设置 BIT 0 (0x01) 和 BIT 3 (0x08) */
+  xTaskNotify(hTask, 0x01, eSetBits);
+  xTaskNotify(hTask, 0x08, eSetBits);
+
+  uint32_t ulReceivedValue = 0;
+  /* 2. 任务等待通知并提取事件值 (退出时清除所有 bits) */
+  BaseType_t xResult = xTaskNotifyWait(0x00, 0xFFFFFFFF, &ulReceivedValue, 0);
+
+  TEST_ASSERT_EQUAL_INT(pdPASS, xResult);
+  TEST_ASSERT_EQUAL_HEX32(0x09, ulReceivedValue); /* 0x01 | 0x08 = 0x09 */
+
+  /* 3. 验证退出后事件 bits 已被清空 */
+  TCB_t *tcb = (TCB_t *)hTask;
+  TEST_ASSERT_EQUAL_HEX32(0x00, tcb->ulNotifiedValue);
+}
+
 int main(void) {
   UNITY_BEGIN();
 
@@ -390,6 +470,15 @@ int main(void) {
 
   /* Suite 10: Mutex & Priority Inheritance */
   RUN_TEST(test_Mutex_And_Priority_Inheritance);
+
+  /* Suite 11: Critical Section */
+  RUN_TEST(test_Critical_Sections);
+
+  /* Suite 12: Task Notifications (NotifyTake) */
+  RUN_TEST(test_Task_Notifications_NotifyTake);
+
+  /* Suite 13: Task Notifications (Event Bits) */
+  RUN_TEST(test_Task_Notifications_SetBits_And_NotifyWait);
 
   return UNITY_END();
 }
